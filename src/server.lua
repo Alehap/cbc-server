@@ -16,8 +16,9 @@
     You should have received a copy of the GNU General Public License
     along with this program; if not, write to the Free Software
     Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
---]]--
+--]]
 local socket = require("socket")
+local process = require("process")
 
 local all_connections = {}
 
@@ -63,14 +64,6 @@ local function co_accept(target)
     return result
 end
 
-local function process_line(line, client)
-    print("process_line", line, client)
-    client:send(line .. "\n")
-    if line == "exit" or line == "quit" then
-        return true
-    end
-end
-
 local function server_thread(server)
     local client = co_accept(server)
     print("server_thread co_accept client=", client)
@@ -79,7 +72,7 @@ local function server_thread(server)
     local quit_client = false
     repeat
         local line = co_receive(client)
-        quit_client = process_line(line, client)
+        quit_client = process.cmd(line, client)
     until quit_client
     client:close()
 end
@@ -95,13 +88,19 @@ end
 local repr = tools.repr
 local function dispatcher()
     repeat
+        local breaked = false
         for i,v in ipairs(all_threads) do
+            if coroutine.status(v) == "dead" then
+                table.remove(all_threads, i)
+                breaked = true
+                break
+            end
             local status, task = coroutine.resume(v)
             if status then
                 -- coroutine yields or returns
                 if not task then    -- thread returns
                     table.remove(all_threads, i)
-                    -- the index of table changed, we must break the loop
+                    breaked = true
                     break
                 else    -- thread yields
                     table.insert(all_connections, task)
@@ -113,7 +112,7 @@ local function dispatcher()
         end
         local nt = #all_threads
         local nc = #all_connections
-        if nt ~= 0 and nt == nc then
+        if nc ~= 0 and not breaked then
             socket.select(all_connections)
         end
     until nt == 0
